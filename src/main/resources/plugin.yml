@@ -1,0 +1,13 @@
+name: AurexaSumo
+main: fr.aurexalium.aurexasumo.AurexaSumo
+version: 1.0.0
+author: Aurexalium
+description: Tournoi Sumo pour Aurexalium
+commands:
+  sumo:
+    description: Commande principale AurexaSumo
+    aliases: [aurexasumo]
+permissions:
+  aurexasumo.admin:
+    description: Configurer les arenes AurexaSumo
+    default: op

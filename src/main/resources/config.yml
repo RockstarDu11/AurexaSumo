@@ -1,0 +1,22 @@
+# AurexaSumo - configuration
+prefix: "&6&lAurexalium &c&l>> &e"
+
+# Decompte (en secondes) avant le debut quand assez de joueurs sont la
+start-countdown: 20
+
+# Decompte (en secondes) avant chaque combat
+fight-countdown: 3
+
+# Duree maximale d'un combat (en secondes). Si le temps est ecoule,
+# celui qui est le plus loin du centre de la zone perd.
+round-time: 60
+
+# Commande console executee pour donner des coins
+# {player} = pseudo, {amount} = montant. Laisse vide pour desactiver.
+coins-command: "eco give {player} {amount}"
+
+# Les coins sont donnes uniquement a la fin de la partie
+coins:
+  win: 100            # le gagnant
+  second: 40          # le finaliste (dernier elimine)
+  participation: 10   # tous les autres
