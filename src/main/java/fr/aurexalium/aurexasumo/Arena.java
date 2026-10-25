@@ -60,7 +60,9 @@ public class Arena {
     // tournoi
     private final List<UUID> queue = new ArrayList<UUID>();       // joueurs en vie qui attendent leur combat
     private final List<UUID> eliminated = new ArrayList<UUID>();  // dans l'ordre d'elimination
-    private UUID f1, f2;                                          // les deux combattants du moment
+    private UUID f1, f2;                                          // les deux combattants du round en cours
+    private UUID matchA, matchB;                                  // les 2 joueurs du match en cours (plusieurs rounds)
+    private int winsA, winsB, roundNum, roundsNeeded;
     private boolean frozen = false;
     private int countdownLeft;
     private int timeLeft;
@@ -207,7 +209,7 @@ public class Arena {
         UUID u = p.getUniqueId();
         if (!members.contains(u)) return;
 
-        boolean wasFighter = u.equals(f1) || u.equals(f2);
+        boolean wasFighter = u.equals(matchA) || u.equals(matchB);
         members.remove(u);
         queue.remove(u);
         plugin.unregisterPlayer(u);
@@ -227,10 +229,13 @@ public class Arena {
             broadcast("&cPas assez de joueurs, le décompte est annulé.");
         } else if (state == State.PLAYING) {
             if (wasFighter) {
-                UUID other = u.equals(f1) ? f2 : f1;
+                UUID other = u.equals(matchA) ? matchB : matchA;
                 stopRoundTask();
+                cancelNextRound();
                 f1 = null;
                 f2 = null;
+                matchA = null;
+                matchB = null;
                 frozen = false;
                 if (other != null && members.contains(other)) {
                     Player o = Bukkit.getPlayer(other);
@@ -241,7 +246,7 @@ public class Arena {
                     queue.add(other);
                 }
                 afterRound();
-            } else if (f1 == null && f2 == null) {
+            } else if (matchA == null && matchB == null) {
                 afterRound();
             }
         }
@@ -326,6 +331,7 @@ public class Arena {
         }
     }
 
+    // lance un nouveau MATCH : 2 joueurs qui se battent sur plusieurs rounds
     private void startRound() {
         nextRoundTask = null;
         if (state != State.PLAYING) return;
@@ -333,25 +339,52 @@ public class Arena {
             afterRound();
             return;
         }
-        f1 = queue.remove(0);
-        f2 = queue.remove(0);
-        Player a = Bukkit.getPlayer(f1);
-        Player b = Bukkit.getPlayer(f2);
+        matchA = queue.remove(0);
+        matchB = queue.remove(0);
+        winsA = 0;
+        winsB = 0;
+        roundNum = 0;
+        int rounds = plugin.getConfig().getInt("rounds-per-match", 5);
+        roundsNeeded = rounds / 2 + 1;
+        Player a = Bukkit.getPlayer(matchA);
+        Player b = Bukkit.getPlayer(matchB);
         if (a == null || b == null) {
             // ne devrait pas arriver : on remet les joueurs presents dans la file
-            if (a != null) queue.add(f1);
-            if (b != null) queue.add(f2);
-            f1 = null;
-            f2 = null;
+            if (a != null) queue.add(matchA);
+            if (b != null) queue.add(matchB);
+            matchA = null;
+            matchB = null;
             afterRound();
             return;
         }
+        broadcast("&eMatch : &6" + a.getName() + " &evs &6" + b.getName()
+                + " &7(premier à " + roundsNeeded + " rounds)");
+        beginRound();
+    }
+
+    private void scheduleBeginRound(long delay) {
+        cancelNextRound();
+        nextRoundTask = Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
+            public void run() { beginRound(); }
+        }, delay);
+    }
+
+    // lance un round du match en cours
+    private void beginRound() {
+        nextRoundTask = null;
+        if (state != State.PLAYING || matchA == null || matchB == null) return;
+        Player a = Bukkit.getPlayer(matchA);
+        Player b = Bukkit.getPlayer(matchB);
+        if (a == null || b == null) return;
+        roundNum++;
+        f1 = matchA;
+        f2 = matchB;
         prepareFighter(a, spawn1);
         prepareFighter(b, spawn2);
         frozen = true;
         countdownLeft = plugin.getConfig().getInt("fight-countdown", 3);
         timeLeft = plugin.getConfig().getInt("round-time", 60);
-        broadcast("&eCombat : &6" + a.getName() + " &evs &6" + b.getName());
+        broadcast("&eRound &6" + roundNum + " &7(" + winsA + " - " + winsB + ")");
         updateScoreboards();
 
         roundTask = Bukkit.getScheduler().runTaskTimer(plugin, new Runnable() {
@@ -414,7 +447,7 @@ public class Arena {
     }
 
     private void endRound(UUID loser) {
-        UUID winner = loser.equals(f1) ? f2 : f1;
+        UUID winner = loser.equals(matchA) ? matchB : matchA;
         stopRoundTask();
         f1 = null;
         f2 = null;
@@ -425,18 +458,38 @@ public class Arena {
         }
         Player lp = Bukkit.getPlayer(loser);
         Player wp = Bukkit.getPlayer(winner);
-        eliminated.add(loser);
-        queue.add(winner);
+        String wn = wp != null ? wp.getName() : "?";
+        String ln = lp != null ? lp.getName() : "?";
 
-        broadcast("&6" + (wp != null ? wp.getName() : "?") + " &ebat &6" + (lp != null ? lp.getName() : "?")
-                + " &e! &7(Restants : " + alive() + ")");
-        if (lp != null) {
-            toSpec(lp);
-            plugin.msg(lp, "&cTu es éliminé ! Tu peux regarder la suite ou quitter avec le lit.");
+        int winnerWins;
+        if (winner.equals(matchA)) {
+            winsA++;
+            winnerWins = winsA;
+        } else {
+            winsB++;
+            winnerWins = winsB;
         }
+        if (lp != null) toSpec(lp);
         if (wp != null) toSpec(wp);
-        updateScoreboards();
-        afterRound();
+
+        if (winnerWins >= roundsNeeded) {
+            // match termine : le perdant est elimine, le gagnant retourne dans la file
+            eliminated.add(loser);
+            queue.add(winner);
+            matchA = null;
+            matchB = null;
+            broadcast("&6" + wn + " &egagne le match contre &6" + ln + " &7(" + winsA + " - " + winsB
+                    + ") &e! &7(Restants : " + alive() + ")");
+            if (lp != null) {
+                plugin.msg(lp, "&cTu es éliminé ! Tu peux regarder la suite ou quitter avec le lit.");
+            }
+            updateScoreboards();
+            afterRound();
+        } else {
+            broadcast("&6" + wn + " &emarque le round &7(" + winsA + " - " + winsB + ")");
+            updateScoreboards();
+            scheduleBeginRound(40L);
+        }
     }
 
     private void afterRound() {
@@ -461,7 +514,7 @@ public class Arena {
     }
 
     private int alive() {
-        return queue.size() + (f1 != null ? 1 : 0) + (f2 != null ? 1 : 0);
+        return queue.size() + (matchA != null ? 1 : 0) + (matchB != null ? 1 : 0);
     }
 
     private void win(UUID winner) {
@@ -471,6 +524,8 @@ public class Arena {
         cancelNextRound();
         f1 = null;
         f2 = null;
+        matchA = null;
+        matchB = null;
         frozen = false;
 
         Player wp = Bukkit.getPlayer(winner);
@@ -517,6 +572,11 @@ public class Arena {
         saved.clear();
         f1 = null;
         f2 = null;
+        matchA = null;
+        matchB = null;
+        winsA = 0;
+        winsB = 0;
+        roundNum = 0;
         frozen = false;
         state = State.WAITING;
         refreshSigns();
@@ -528,7 +588,7 @@ public class Arena {
         if (cmd == null || cmd.trim().isEmpty()) return;
         Bukkit.dispatchCommand(Bukkit.getConsoleSender(),
                 cmd.replace("{player}", p.getName()).replace("{amount}", String.valueOf(amount)));
-        p.sendMessage(plugin.getPrefix() + plugin.color("&a+" + amount + " coins"));
+        p.sendMessage(plugin.getPrefix() + plugin.color("&a+" + amount + " points"));
     }
 
     // ------------------------------------------------------------
@@ -577,6 +637,7 @@ public class Arena {
                 UUID du = ((Player) d).getUniqueId();
                 if ((du.equals(f1) || du.equals(f2)) && !du.equals(v)) {
                     // pas de degats : on garde seulement le recul
+                    e.setCancelled(false);   // un joueur invincible (op, god, mode staff) peut etre repousse
                     e.setDamage(0.0);
                     return;
                 }
@@ -590,6 +651,14 @@ public class Arena {
     // ------------------------------------------------------------
 
     private void restore(Player p) {
+        restoreInventory(p);
+        String cmd = plugin.getConfig().getString("end-command", "invreset {player}");
+        if (cmd != null && !cmd.trim().isEmpty()) {
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd.replace("{player}", p.getName()));
+        }
+    }
+
+    private void restoreInventory(Player p) {
         Saved s = saved.remove(p.getUniqueId());
         p.getInventory().clear();
         p.getInventory().setArmorContents(new ItemStack[4]);
@@ -659,9 +728,15 @@ public class Arena {
                 lines.add(ChatColor.GRAY + "Restants: " + ChatColor.WHITE + alive());
                 lines.add(ChatColor.RESET.toString());
                 lines.add(ChatColor.GRAY + "Combat :");
-                lines.add(ChatColor.YELLOW + fighterName(f1));
+                lines.add(ChatColor.YELLOW + fighterName(matchA));
                 lines.add(ChatColor.GRAY + "vs");
-                lines.add(ChatColor.YELLOW + fighterName(f2) + ChatColor.RESET);
+                lines.add(ChatColor.YELLOW + fighterName(matchB) + ChatColor.RESET);
+                if (matchA != null) {
+                    int rounds = plugin.getConfig().getInt("rounds-per-match", 5);
+                    lines.add(ChatColor.RESET.toString() + ChatColor.RESET);
+                    lines.add(ChatColor.GRAY + "Round: " + ChatColor.WHITE + roundNum + "/" + rounds);
+                    lines.add(ChatColor.GRAY + "Score: " + ChatColor.WHITE + winsA + "-" + winsB);
+                }
             }
             int score = lines.size();
             for (String l : lines) {

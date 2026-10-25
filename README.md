@@ -1,7 +1,7 @@
 # AurexaSumo - Sumo pour Aurexalium (Spigot 1.8.8)
 
 Tournoi a elimination directe. Les joueurs attendent dans un lobby, puis se
-battent 1 contre 1 sur une plateforme. Pas de degats : on se repousse
+battent 1 contre 1 sur une plateforme, chaque match se jouant en plusieurs rounds (au meilleur de 5 par defaut). Pas de degats : on se repousse
 seulement. Celui qui tombe (sous la plateforme ou dans l'eau / la lave) est
 elimine. Le dernier joueur en vie gagne.
 
